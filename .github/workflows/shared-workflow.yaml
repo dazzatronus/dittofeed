@@ -1,0 +1,103 @@
+name: Shared CI Workflow
+
+on:
+  workflow_call:
+    inputs:
+      package-name:
+        required: true
+        type: string
+      is_backend:
+        required: false
+        default: "false"
+        type: string
+      run_tests:
+        required: false
+        default: "false"
+        type: string
+      run_lint:
+        required: false
+        default: "false"
+        type: string
+
+jobs:
+  lint:
+    name: Run Lint
+    runs-on: ubuntu-latest
+    if: ${{ inputs.run_lint == 'true' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Use Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: "18"
+          cache: "yarn"
+
+      - name: Install dependencies
+        run: yarn workspaces focus ${{ inputs.package-name }}
+
+      - name: Prisma generate
+        if: ${{ inputs.is_backend == 'true' }}
+        run: yarn workspace backend-lib prisma generate
+
+      - name: Run lint
+        run: yarn workspace ${{ inputs.package-name }} lint
+
+      - name: Run Typecheck
+        run: yarn workspace ${{ inputs.package-name }} check
+
+  test:
+    name: Run Tests
+    if: ${{ inputs.run_tests == 'true' }}
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        # Only start the service if the backend is being tested
+        image: ${{ ( inputs.is_backend == 'true' && inputs.run_tests == 'true' ) && 'postgres:15' || '' }}
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: dittofeed_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      clickhouse-server:
+        # Only start the service if the backend is being tested
+        image: ${{ ( inputs.is_backend == 'true' && inputs.run_tests == 'true' ) && 'clickhouse/clickhouse-server:23.8.8.20-alpine' || '' }}
+        env:
+          CLICKHOUSE_USER: dittofeed
+          CLICKHOUSE_PASSWORD: password
+        ports:
+          - 8123:8123
+          - 9000:9000
+          - 9009:9009
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Use Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: "18"
+          cache: "yarn"
+
+      - name: Install dependencies
+        run: yarn
+
+      - name: Prisma generate
+        if: ${{ inputs.is_backend == 'true' }}
+        run: yarn workspace backend-lib prisma generate
+
+      - name: Build Package
+        run: yarn workspace ${{ inputs.package-name }} check
+
+      - name: Run Tests
+        run: yarn jest "packages/${{ inputs.package-name }}"
